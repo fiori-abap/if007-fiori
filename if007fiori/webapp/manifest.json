@@ -33,6 +33,13 @@
           "localUri": "localService/mainService/metadata.xml",
           "odataVersion": "4.0"
         }
+      },
+      "addonService": {
+        "uri": "/sap/opu/odata4/sap/zui_if007_addon_o4/srvd/sap/zui_if007_addon/0001/",
+        "type": "OData",
+        "settings": {
+          "odataVersion": "4.0"
+        }
       }
     }
   },
@@ -55,14 +62,14 @@
   "sap.ui5": {
     "flexEnabled": true,
     "extends": {
-    "extensions": {
-      "sap.ui.controllerExtensions": {
-        "sap.fe.templates.ListReport.ListReportController": {
-          "controllerName": "zrap.if007.if007fiori.ext.controller.OverviewListExt"
+      "extensions": {
+        "sap.ui.controllerExtensions": {
+          "sap.fe.templates.ListReport.ListReportController": {
+            "controllerName": "zrap.if007.if007fiori.ext.controller.OverviewListExt"
+          }
         }
       }
-    }
-  },
+    },
     "dependencies": {
       "minUI5Version": "1.153.0",
       "libs": {
@@ -91,6 +98,14 @@
           "earlyRequests": true
         }
       },
+      "addon": {
+        "dataSource": "addonService",
+        "preload": false,
+        "settings": {
+          "operationMode": "Server",
+          "updateGroupId": "if007Save"
+        }
+      },
       "@i18n": {
         "type": "sap.ui.model.resource.ResourceModel",
         "uri": "i18n/i18n.properties"
@@ -106,11 +121,6 @@
           "pattern": ":?query:",
           "name": "OverviewList",
           "target": "OverviewList"
-        },
-        {
-          "pattern": "Overview({key}):?query:",
-          "name": "OverviewObjectPage",
-          "target": "OverviewObjectPage"
         }
       ],
       "targets": {
@@ -122,17 +132,12 @@
             "settings": {
               "contextPath": "/Overview",
               "variantManagement": "Page",
-              "navigation": {
-                "Overview": {
-                  "detail": {
-                    "route": "OverviewObjectPage"
-                  }
-                }
-              },
               "controlConfiguration": {
                 "@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
-                    "type": "GridTable"
+                    "type": "GridTable",
+                    "selectionMode": "ForceMulti",
+                    "beforeRebindTable": ".extension.zrap.if007.if007fiori.ext.controller.OverviewListExt.beforeRebindTable"
                   },
                   "columns": {
                     "CommentTextCell": {
@@ -162,20 +167,18 @@
                       },
                       "template": "zrap.if007.if007fiori.ext.fragment.SapStatusCell"
                     }
+                  },
+                  "actions": {
+                    "SaveChanges": {
+                      "press": "zrap.if007.if007fiori.ext.controller.SaveChanges.onSaveChanges",
+                      "visible": true,
+                      "enabled": "zrap.if007.if007fiori.ext.controller.SaveChanges.isEnabled",
+                      "requiresSelection": false,
+                      "text": "保存"
+                    }
                   }
                 }
               }
-            }
-          }
-        },
-        "OverviewObjectPage": {
-          "type": "Component",
-          "id": "OverviewObjectPage",
-          "name": "sap.fe.templates.ObjectPage",
-          "options": {
-            "settings": {
-              "editableHeaderContent": false,
-              "contextPath": "/Overview"
             }
           }
         }

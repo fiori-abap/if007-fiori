@@ -9,13 +9,13 @@
             parts: [
                 {path: 'SalesOrder'},
                 {path: 'SalesOrderItem'},
-                {path: 'CommentText'}
+                {path: 'CommentText'},
+                {path: 'changeState>/revision'}
             ],
             formatter: 'handler.formatValue'
         }"
         liveChange="handler.onLiveChange"
         width="100%"
-        editable="true"
         placeholder="输入备注" />
 
 </core:FragmentDefinition>

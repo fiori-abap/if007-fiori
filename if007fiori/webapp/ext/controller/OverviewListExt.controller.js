@@ -7,129 +7,48 @@ sap.ui.define([
     return ControllerExtension.extend(
         "zrap.if007.if007fiori.ext.controller.OverviewListExt",
         {
-            override: {
+            beforeRebindTable: function () {
 
-                onAfterRendering: function () {
+                // 1. 获取当前选中的订单明细
+                var oExtensionAPI =
+                    this.base.getExtensionAPI();
 
-                    var oView = this.base.getView();
+                var aSelectedContexts =
+                    oExtensionAPI.getSelectedContexts();
 
-                    // 查找 Fiori Elements 的查询栏
-                    var aFilterBars = oView.findAggregatedObjects(
-                        true,
-                        function (oControl) {
-                            return oControl.isA(
-                                "sap.ui.mdc.FilterBar"
-                            );
-                        }
-                    );
+                // 2. 取消所有选中状态
+                if (aSelectedContexts.length > 0) {
 
-                    if (aFilterBars.length === 0) {
-                        console.warn(
-                            "[IF007] FilterBar not found"
-                        );
-                        return;
-                    }
+                    var oBinding =
+                        aSelectedContexts[0].getBinding();
 
-                    var oFilterBar = aFilterBars[0];
+                    var oHeaderContext =
+                        oBinding &&
+                        oBinding.getHeaderContext();
 
-                    // 避免重复注册
-                    if (this._oFilterBar === oFilterBar) {
-                        return;
-                    }
+                    if (oHeaderContext &&
+                        typeof oHeaderContext.setSelected === "function") {
 
-                    if (this._oFilterBar) {
-                        this._oFilterBar.detachSearch(
-                            this._onSearch,
-                            this
-                        );
-                    }
+                        // 一次取消整个列表的选择
+                        oHeaderContext.setSelected(false);
 
-                    this._oFilterBar = oFilterBar;
+                    } else {
 
-                    oFilterBar.attachSearch(
-                        this._onSearch,
-                        this
-                    );
+                        // 单独取消选中的记录
+                        aSelectedContexts.forEach(function (oContext) {
 
-                    console.log(
-                        "[IF007] Go event registered"
-                    );
-                },
-
-                onExit: function () {
-                    if (this._oFilterBar) {
-                        this._oFilterBar.detachSearch(
-                            this._onSearch,
-                            this
-                        );
+                            if (typeof oContext.setSelected === "function") {
+                                oContext.setSelected(false);
+                            }
+                        });
                     }
                 }
-            },
 
-            _onSearch: function () {
-
-                // 1. 清空所有未保存修改
+                // 3. 清空未保存的修改
                 ChangeStore.clear();
 
-                // 2. 恢复当前画面控件的后台原值
-                var oView = this.base.getView();
-
-                var aControls = oView.findAggregatedObjects(
-                    true,
-                    function (oControl) {
-
-                        var sId = oControl.getId();
-
-                        return (
-                            sId.includes("idCommentTextInput") ||
-                            sId.includes("idFollowUpDatePicker") ||
-                            sId.includes("idSapStatusComboBox")
-                        );
-                    }
-                );
-
-                aControls.forEach(function (oControl) {
-
-                    var oContext =
-                        oControl.getBindingContext();
-
-                    if (!oContext) {
-                        return;
-                    }
-
-                    var sId = oControl.getId();
-
-                    if (sId.includes("idCommentTextInput")) {
-
-                        oControl.setValue(
-                            oContext.getProperty("CommentText") || ""
-                        );
-
-                    } else if (
-                        sId.includes("idFollowUpDatePicker")
-                    ) {
-
-                        oControl.setValue(
-                            oContext.getProperty("FollowUpDate") || ""
-                        );
-
-                    } else if (
-                        sId.includes("idSapStatusComboBox")
-                    ) {
-
-                        var sStatus =
-                            oContext.getProperty("SapStatus") || "";
-
-                        oControl.setSelectedKey(sStatus);
-
-                        if (!sStatus) {
-                            oControl.setValue("");
-                        }
-                    }
-                });
-
                 console.log(
-                    "[IF007] Go: unsaved changes cleared"
+                    "[IF007] Rebind: changes and selection cleared"
                 );
             }
         }

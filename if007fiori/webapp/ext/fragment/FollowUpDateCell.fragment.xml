@@ -9,7 +9,8 @@
             parts: [
                 {path: 'SalesOrder'},
                 {path: 'SalesOrderItem'},
-                {path: 'FollowUpDate'}
+                {path: 'FollowUpDate'},
+                {path: 'changeState>/revision'}
             ],
             formatter: 'handler.formatValue'
         }"
@@ -17,7 +18,6 @@
         displayFormat="yyyy-MM-dd"
         change="handler.onChange"
         width="100%"
-        editable="true"
         placeholder="选择日期" />
 
 </core:FragmentDefinition>

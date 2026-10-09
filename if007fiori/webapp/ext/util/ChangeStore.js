@@ -1,18 +1,41 @@
-sap.ui.define([], function () {
+sap.ui.define([
+    "sap/ui/model/json/JSONModel"
+], function (JSONModel) {
     "use strict";
 
-    // 按销售订单 + 明细番号保存修改
     var mChanges = Object.create(null);
+    var mSavedDisplay = Object.create(null);
+    var oAddonModel = null;
+
+    var oStateModel = new JSONModel({
+        revision: 0
+    });
 
     function makeKey(sOrder, sItem) {
         return JSON.stringify([sOrder, sItem]);
     }
 
+    function notifyChange() {
+        oStateModel.setProperty(
+            "/revision",
+            oStateModel.getProperty("/revision") + 1
+        );
+    }
+
     return {
+        getModel: function () {
+            return oStateModel;
+        },
 
-        // 记录用户修改的字段
+        setAddonModel: function (oModel) {
+            oAddonModel = oModel;
+        },
+
+        getAddonModel: function () {
+            return oAddonModel;
+        },
+
         setValue: function (oContext, sField, vValue) {
-
             if (!oContext) {
                 return;
             }
@@ -36,10 +59,16 @@ sap.ui.define([], function () {
             mChanges[sKey][sField] = vValue;
         },
 
-        // 显示缓存值；没有修改时显示后台原值
         getValue: function (sOrder, sItem, vOriginal, sField) {
+            var sKey = makeKey(sOrder, sItem);
+            var oRow = mChanges[sKey];
 
-            var oRow = mChanges[makeKey(sOrder, sItem)];
+            if (oRow &&
+                Object.prototype.hasOwnProperty.call(oRow, sField)) {
+                return oRow[sField];
+            }
+
+            oRow = mSavedDisplay[sKey];
 
             if (oRow &&
                 Object.prototype.hasOwnProperty.call(oRow, sField)) {
@@ -49,16 +78,37 @@ sap.ui.define([], function () {
             return vOriginal == null ? "" : vOriginal;
         },
 
-        // 后续保存按钮将读取这里
         getChanges: function () {
             return Object.keys(mChanges).map(function (sKey) {
                 return Object.assign({}, mChanges[sKey]);
             });
         },
 
-        // 保存成功后清除缓存
+        // 只移除确认保存成功的记录
+        confirmSaved: function (aRows) {
+            aRows.forEach(function (oRow) {
+                var sKey = makeKey(
+                    oRow.SalesOrder,
+                    oRow.SalesOrderItem
+                );
+
+                mSavedDisplay[sKey] = Object.assign(
+                    {},
+                    mSavedDisplay[sKey] || {},
+                    mChanges[sKey] || {}
+                );
+
+                delete mChanges[sKey];
+            });
+
+            notifyChange();
+        },
+
+        // Go 查询时清空全部缓存
         clear: function () {
             mChanges = Object.create(null);
+            mSavedDisplay = Object.create(null);
+            notifyChange();
         }
     };
 });

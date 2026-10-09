@@ -1,12 +1,32 @@
-sap.ui.define(
-    ["sap/fe/core/AppComponent"],
-    function (Component) {
-        "use strict";
 
-        return Component.extend("zrap.if007.if007fiori.Component", {
+sap.ui.define([
+    "sap/fe/core/AppComponent",
+    "zrap/if007/if007fiori/ext/util/ChangeStore"
+], function (AppComponent, ChangeStore) {
+    "use strict";
+
+    return AppComponent.extend(
+        "zrap.if007.if007fiori.Component",
+        {
             metadata: {
                 manifest: "json"
+            },
+
+            init: function () {
+                AppComponent.prototype.init.apply(
+                    this,
+                    arguments
+                );
+
+                this.setModel(
+                    ChangeStore.getModel(),
+                    "changeState"
+                );
+
+                ChangeStore.setAddonModel(
+                    this.getModel("addon")
+                );
             }
-        });
-    }
-);
+        }
+    );
+});
