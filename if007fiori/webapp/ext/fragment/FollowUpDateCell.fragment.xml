@@ -1,7 +1,6 @@
 <core:FragmentDefinition
     xmlns:core="sap.ui.core"
     xmlns="sap.m">
-
     <DatePicker
         id="idFollowUpDatePicker"
         core:require="{handler: 'zrap/if007/if007fiori/ext/fragment/FollowUpDateCell'}"
@@ -14,10 +13,17 @@
             ],
             formatter: 'handler.formatValue'
         }"
+        editable="{
+            parts: [
+                {path: 'SalesOrder'},
+                {path: 'SalesOrderItem'},
+                {path: 'changeState>/revision'}
+            ],
+            formatter: 'handler.isEditable'
+        }"
         valueFormat="yyyy-MM-dd"
         displayFormat="yyyy-MM-dd"
         change="handler.onChange"
         width="100%"
         placeholder="选择日期" />
-
 </core:FragmentDefinition>

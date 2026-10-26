@@ -1,7 +1,6 @@
 <core:FragmentDefinition
     xmlns:core="sap.ui.core"
     xmlns="sap.m">
-
     <ComboBox
         id="idSapStatusComboBox"
         core:require="{handler: 'zrap/if007/if007fiori/ext/fragment/SapStatusCell'}"
@@ -14,26 +13,20 @@
             ],
             formatter: 'handler.formatValue'
         }"
+        editable="{
+            parts: [
+                {path: 'SalesOrder'},
+                {path: 'SalesOrderItem'},
+                {path: 'changeState>/revision'}
+            ],
+            formatter: 'handler.isEditable'
+        }"
         selectionChange="handler.onSelectionChange"
         change="handler.onChange"
         placeholder="请选择"
         width="100%">
-
-        <core:Item
-            id="idStatusOpenItem"
-            key="OPEN"
-            text="未处理" />
-
-        <core:Item
-            id="idStatusProcItem"
-            key="PROC"
-            text="处理中" />
-
-        <core:Item
-            id="idStatusDoneItem"
-            key="DONE"
-            text="已完成" />
-
+        <core:Item id="idStatusOpenItem" key="OPEN" text="未处理" />
+        <core:Item id="idStatusProcItem" key="PROC" text="处理中" />
+        <core:Item id="idStatusDoneItem" key="DONE" text="已完成" />
     </ComboBox>
-
 </core:FragmentDefinition>

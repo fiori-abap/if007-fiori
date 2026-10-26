@@ -1,7 +1,6 @@
 <core:FragmentDefinition
     xmlns:core="sap.ui.core"
     xmlns="sap.m">
-
     <Input
         id="idCommentTextInput"
         core:require="{handler: 'zrap/if007/if007fiori/ext/fragment/CommentTextCell'}"
@@ -14,8 +13,15 @@
             ],
             formatter: 'handler.formatValue'
         }"
+        editable="{
+            parts: [
+                {path: 'SalesOrder'},
+                {path: 'SalesOrderItem'},
+                {path: 'changeState>/revision'}
+            ],
+            formatter: 'handler.isEditable'
+        }"
         liveChange="handler.onLiveChange"
         width="100%"
         placeholder="输入备注" />
-
 </core:FragmentDefinition>

@@ -173,8 +173,30 @@
                       "press": "zrap.if007.if007fiori.ext.controller.SaveChanges.onSaveChanges",
                       "visible": true,
                       "enabled": "zrap.if007.if007fiori.ext.controller.SaveChanges.isEnabled",
-                      "requiresSelection": false,
+                      "requiresSelection": true,
                       "text": "保存"
+                    },
+                    "SaveSap": {
+                      "press": "zrap.if007.if007fiori.ext.controller.SaveChanges.onSaveSap",
+                      "visible": true,
+                      "enabled": "zrap.if007.if007fiori.ext.controller.SaveChanges.isSapRetryEnabled",
+                      "requiresSelection": true,
+                      "text": "仅保存 SAP",
+                      "position": {
+                        "placement": "After",
+                        "anchor": "SaveChanges"
+                      }
+                    },
+                    "SaveCloud": {
+                      "press": "zrap.if007.if007fiori.ext.controller.SaveChanges.onSaveCloud",
+                      "visible": true,
+                      "enabled": "zrap.if007.if007fiori.ext.controller.SaveChanges.isCloudRetryEnabled",
+                      "requiresSelection": true,
+                      "text": "仅保存 Cloud",
+                      "position": {
+                        "placement": "After",
+                        "anchor": "SaveSap"
+                      }
                     }
                   }
                 }
