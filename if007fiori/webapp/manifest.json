@@ -40,6 +40,13 @@
         "settings": {
           "odataVersion": "4.0"
         }
+      },
+      "syncService": {
+        "uri": "/sap/opu/odata4/sap/zui_if007_sync_o4/srvd/sap/zui_if007_sync/0001/",
+        "type": "OData",
+        "settings": {
+          "odataVersion": "4.0"
+        }
       }
     }
   },
@@ -104,6 +111,15 @@
         "settings": {
           "operationMode": "Server",
           "updateGroupId": "if007Save"
+        }
+      },
+      "sync": {
+        "dataSource": "syncService",
+        "preload": false,
+        "settings": {
+          "operationMode": "Server",
+          "groupId": "$direct",
+          "updateGroupId": "$direct"
         }
       },
       "@i18n": {

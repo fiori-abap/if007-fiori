@@ -7,6 +7,7 @@ sap.ui.define([
     var mSavedDisplay = Object.create(null);
     var mPendingByKey = Object.create(null);
     var oAddonModel = null;
+    var oSyncModel = null;
     var bBusy = false;
 
     var oStateModel = new JSONModel({ revision: 0, busy: false });
@@ -81,6 +82,14 @@ sap.ui.define([
             return oAddonModel;
         },
 
+        setSyncModel: function (oModel) {
+            oSyncModel = oModel;
+        },
+
+        getSyncModel: function () {
+            return oSyncModel;
+        },
+
         isRowEditable: function (sOrder, sItem) {
             return !bBusy && !getPending(sOrder, sItem);
         },
@@ -146,7 +155,7 @@ sap.ui.define([
                         cloudMessage: ""
                     };
                 } else if (oPending.sapStatus !== "F" ||
-                           oPending.cloudStatus !== "F") {
+                    oPending.cloudStatus !== "F") {
                     // 单边重试允许继续使用快照，禁止用新输入覆盖
                     // 此处不改已有记录
                 }

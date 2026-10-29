@@ -26,6 +26,15 @@ sap.ui.define([
                 ChangeStore.setAddonModel(
                     this.getModel("addon")
                 );
+                
+                ChangeStore.setSyncModel(
+                    this.getModel("sync")
+                );
+
+                console.log(
+                    "[IF007] Sync Model ready:",
+                    !!ChangeStore.getSyncModel()
+                );
             }
         }
     );
