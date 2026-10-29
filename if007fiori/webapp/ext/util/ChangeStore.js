@@ -1,246 +1,204 @@
-sap.ui.define([
-    "sap/ui/model/json/JSONModel"
-], function (JSONModel) {
+sap.ui.define(["sap/ui/model/json/JSONModel"], function (JSONModel) {
     "use strict";
 
+    var FIELD_NAMES = ["CommentText", "FollowUpDate", "SapStatus", "CloudDeliveryDate", "ExternalStatus"];
     var mChanges = Object.create(null);
     var mSavedDisplay = Object.create(null);
     var mPendingByKey = Object.create(null);
+    var mLastStatus = Object.create(null);
+    var mHydrated = Object.create(null);
+    var mHydrating = Object.create(null);
+    var mHydrationErrors = Object.create(null);
+    var fnReadSnapshot = null;
     var oAddonModel = null;
     var oSyncModel = null;
     var bBusy = false;
+    var oStateModel = new JSONModel({revision: 0, busy: false});
 
-    var oStateModel = new JSONModel({ revision: 0, busy: false });
-
-    function makeKey(sOrder, sItem) {
-        return JSON.stringify([sOrder, sItem]);
+    function normalize(v, size) {
+        var s = String(v == null ? "" : v).trim();
+        return /^\d+$/.test(s) && s.length <= size ? s.padStart(size, "0") : s;
     }
-
-    function copyRow(oRow) {
-        return Object.assign({}, oRow);
+    function makeKey(order, item) {
+        return JSON.stringify([normalize(order, 10), normalize(item, 6)]);
     }
-
-    function notifyChange() {
-        oStateModel.setProperty(
-            "/revision",
-            oStateModel.getProperty("/revision") + 1
-        );
+    function copy(o) { return Object.assign({}, o); }
+    function notify() { oStateModel.setProperty("/revision", oStateModel.getProperty("/revision") + 1); }
+    function fromSnapshot(db) {
+        return {
+            row: {
+                SalesOrder: normalize(db.SalesOrder, 10),
+                SalesOrderItem: normalize(db.SalesOrderItem, 6),
+                RequestId: db.RequestId,
+                ChangeMask: db.ChangeMask || "00000",
+                CommentText: db.PendingComment || "",
+                FollowUpDate: db.PendingFollowUpDate || "",
+                SapStatus: db.PendingSapStatus || "",
+                CloudDeliveryDate: db.PendingDeliveryDate || "",
+                ExternalStatus: db.PendingExternalStatus || ""
+            },
+            sapStatus: db.SapSaveState || "N",
+            cloudStatus: db.CloudSaveState || "N",
+            sapMessage: db.SapError || "",
+            cloudMessage: db.CloudError || ""
+        };
     }
-
-    function getPending(sOrder, sItem) {
-        return mPendingByKey[makeKey(sOrder, sItem)] || null;
-    }
-
-    // A: 正常/两边失败; S: 仅 SAP 重试; C: 仅 Cloud 重试
-    function getRowMode(sOrder, sItem) {
-        var oPending = getPending(sOrder, sItem);
-        if (!oPending) {
-            return "A";
-        }
-        if (oPending.sapStatus === "F" &&
-            oPending.cloudStatus === "F") {
-            return "A";
-        }
-        if (oPending.sapStatus === "F" &&
-            oPending.cloudStatus === "S") {
-            return "S";
-        }
-        if (oPending.sapStatus === "S" &&
-            oPending.cloudStatus === "F") {
-            return "C";
-        }
-        return null;
-    }
-
-    function getSelectionMode(aContexts) {
-        if (!Array.isArray(aContexts) || !aContexts.length || bBusy) {
-            return null;
-        }
-        var sMode = null;
-        for (var oContext of aContexts) {
-            var sOrder = oContext.getProperty("SalesOrder");
-            var sItem = oContext.getProperty("SalesOrderItem");
-            var sCurrent = getRowMode(sOrder, sItem);
-            if (!sCurrent || (sMode && sMode !== sCurrent)) {
-                return null;
+    function hydrate(order, item) {
+        var key = makeKey(order, item);
+        if (mHydrated[key] || mHydrating[key] || mHydrationErrors[key] || !fnReadSnapshot) { return; }
+        mHydrating[key] = Promise.resolve().then(function () {
+            return fnReadSnapshot(order, item);
+        }).then(function (db) {
+            // Never overwrite an in-flight local save or newly entered edits.
+            if (db && !mChanges[key] && !mPendingByKey[key]) {
+                mLastStatus[key] = {sapStatus: db.SapSaveState || "N",
+                    cloudStatus: db.CloudSaveState || "N",
+                    sapMessage: db.SapError || "", cloudMessage: db.CloudError || ""};
+                if (db.SapSaveState !== "S" || db.CloudSaveState !== "S") {
+                    mPendingByKey[key] = fromSnapshot(db);
+                }
             }
-            sMode = sCurrent;
+            mHydrated[key] = true;
+            notify();
+        }).catch(function (error) {
+            // Do not permit editing if we cannot check for a stored failure.
+            console.error("[IF007] 同步记录读取失败:", order, item, error);
+            mHydrated[key] = false;
+            mHydrationErrors[key] = true;
+            notify();
+        }).finally(function () { delete mHydrating[key]; });
+    }
+    function pending(order, item) { return mPendingByKey[makeKey(order, item)] || null; }
+    function rowMode(order, item) {
+        var key = makeKey(order, item);
+        hydrate(order, item);
+        if (!mHydrated[key]) { return null; }
+        var p = pending(order, item);
+        if (!p) { return "A"; }
+        if (p.sapStatus === "E" && p.cloudStatus === "E") { return "A"; }
+        if (p.sapStatus === "E" && p.cloudStatus === "S") { return "S"; }
+        if (p.sapStatus === "S" && p.cloudStatus === "E") { return "C"; }
+        return null; // P/U/N: an unknown/in-progress outcome must not be retried blindly
+    }
+    function selectionMode(contexts) {
+        if (!Array.isArray(contexts) || !contexts.length || bBusy) { return null; }
+        var mode;
+        for (var c of contexts) {
+            var current = rowMode(c.getProperty("SalesOrder"), c.getProperty("SalesOrderItem"));
+            if (!current || (mode && mode !== current)) { return null; }
+            mode = current;
         }
-        return sMode;
+        return mode || null;
+    }
+    function getChangeMask(row) {
+        return FIELD_NAMES.map(function (f) {
+            return Object.prototype.hasOwnProperty.call(row, f) ? "1" : "0";
+        }).join("");
+    }
+    function displayValue(p, field) {
+        return p && p.row && Object.prototype.hasOwnProperty.call(p.row, field)
+            ? p.row[field] : undefined;
     }
 
     return {
-        getModel: function () {
-            return oStateModel;
+        getModel: function () { return oStateModel; },
+        setAddonModel: function (model) { oAddonModel = model; },
+        getAddonModel: function () { return oAddonModel; },
+        setSyncModel: function (model) { oSyncModel = model; },
+        getSyncModel: function () { return oSyncModel; },
+        setHydrator: function (reader) { fnReadSnapshot = reader; },
+        ensureHydrated: hydrate,
+        isRowEditable: function (order, item) {
+            hydrate(order, item);
+            return !bBusy && !!mHydrated[makeKey(order, item)] && !pending(order, item);
         },
-
-        setAddonModel: function (oModel) {
-            oAddonModel = oModel;
-        },
-
-        getAddonModel: function () {
-            return oAddonModel;
-        },
-
-        setSyncModel: function (oModel) {
-            oSyncModel = oModel;
-        },
-
-        getSyncModel: function () {
-            return oSyncModel;
-        },
-
-        isRowEditable: function (sOrder, sItem) {
-            return !bBusy && !getPending(sOrder, sItem);
-        },
-
-        setValue: function (oContext, sField, vValue) {
-            if (!oContext) {
-                return false;
-            }
-            var sOrder = oContext.getProperty("SalesOrder");
-            var sItem = oContext.getProperty("SalesOrderItem");
-            if (sOrder == null || sItem == null ||
-                !this.isRowEditable(sOrder, sItem)) {
-                return false;
-            }
-            var sKey = makeKey(sOrder, sItem);
-            if (!mChanges[sKey]) {
-                mChanges[sKey] = {
-                    SalesOrder: sOrder,
-                    SalesOrderItem: sItem
-                };
-            }
-            mChanges[sKey][sField] = vValue;
+        setValue: function (context, field, value) {
+            if (!context || !FIELD_NAMES.includes(field)) { return false; }
+            var order = context.getProperty("SalesOrder"), item = context.getProperty("SalesOrderItem");
+            if (order == null || item == null || !this.isRowEditable(order, item)) { return false; }
+            var key = makeKey(order, item);
+            if (!mChanges[key]) { mChanges[key] = { SalesOrder: order, SalesOrderItem: item }; }
+            mChanges[key][field] = value;
             return true;
         },
-
-        getValue: function (sOrder, sItem, vOriginal, sField) {
-            var sKey = makeKey(sOrder, sItem);
-            var oRow = mChanges[sKey];
-            if (oRow && Object.prototype.hasOwnProperty.call(oRow, sField)) {
-                return oRow[sField];
+        getValue: function (order, item, original, field) {
+            hydrate(order, item);
+            var key = makeKey(order, item);
+            var modified = mChanges[key];
+            if (modified && Object.prototype.hasOwnProperty.call(modified, field)) { return modified[field]; }
+            var p = pending(order, item), pv = displayValue(p, field);
+            if (pv !== undefined && p && p.row.ChangeMask && p.row.ChangeMask[FIELD_NAMES.indexOf(field)] === "1") {
+                return pv;
             }
-            oRow = mSavedDisplay[sKey];
-            if (oRow && Object.prototype.hasOwnProperty.call(oRow, sField)) {
-                return oRow[sField];
-            }
-            return vOriginal == null ? "" : vOriginal;
+            var cached = mSavedDisplay[key];
+            if (cached && Object.prototype.hasOwnProperty.call(cached, field)) { return cached[field]; }
+            return original == null ? "" : original;
         },
-
-        getChanges: function () {
-            return Object.keys(mChanges).map(function (sKey) {
-                return copyRow(mChanges[sKey]);
-            });
+        getChanges: function () { return Object.keys(mChanges).map(function (k) { return copy(mChanges[k]); }); },
+        getChangeMask: getChangeMask,
+        getModeForSelection: selectionMode,
+        getPendingRow: function (order, item) {
+            var p = pending(order, item);
+            return p ? copy(p.row) : null;
         },
-
-        getModeForSelection: getSelectionMode,
-
-        getPendingRow: function (sOrder, sItem) {
-            var oPending = getPending(sOrder, sItem);
-            return oPending ? copyRow(oPending.row) : null;
+        beginRow: function (row) {
+            var key = makeKey(row.SalesOrder, row.SalesOrderItem);
+            mHydrated[key] = true;
+            delete mHydrationErrors[key];
+            mLastStatus[key] = {sapStatus: row.SapSaveState || "P", cloudStatus: row.CloudSaveState || "P",
+                sapMessage: row.SapError || "", cloudMessage: row.CloudError || ""};
+            mPendingByKey[key] = {
+                row: copy(row), sapStatus: row.SapSaveState || "P", cloudStatus: row.CloudSaveState || "P",
+                sapMessage: row.SapError || "", cloudMessage: row.CloudError || ""
+            };
+            notify();
         },
-
-        // 只为本次选中的 Key 建立/保留快照
-        beginRows: function (aRows) {
-            aRows.forEach(function (oRow) {
-                var sKey = makeKey(oRow.SalesOrder, oRow.SalesOrderItem);
-                var oPending = mPendingByKey[sKey];
-                if (!oPending) {
-                    mPendingByKey[sKey] = {
-                        row: copyRow(oRow),
-                        sapStatus: "N",
-                        cloudStatus: "N",
-                        sapMessage: "",
-                        cloudMessage: ""
-                    };
-                } else if (oPending.sapStatus !== "F" ||
-                    oPending.cloudStatus !== "F") {
-                    // 单边重试允许继续使用快照，禁止用新输入覆盖
-                    // 此处不改已有记录
-                }
-            });
-            notifyChange();
+        setSideResult: function (row, side, state, message) {
+            var p = pending(row.SalesOrder, row.SalesOrderItem);
+            if (!p || !["S", "E", "U", "P"].includes(state)) { throw new Error("Invalid sync state"); }
+            p[side + "Status"] = state;
+            p[side + "Message"] = message || "";
+            mLastStatus[makeKey(row.SalesOrder, row.SalesOrderItem)] = {
+                sapStatus: p.sapStatus, cloudStatus: p.cloudStatus,
+                sapMessage: p.sapMessage, cloudMessage: p.cloudMessage
+            };
+            notify();
         },
-
-        // HTTP 完成后更新本次选中的订单，不影响其他订单
-        setSideResults: function (aRows, sSide, sStatus, sMessage) {
-            if ((sSide !== "sap" && sSide !== "cloud") ||
-                (sStatus !== "S" && sStatus !== "F")) {
-                throw new Error("Invalid save result");
-            }
-            aRows.forEach(function (oRow) {
-                var oPending = getPending(oRow.SalesOrder, oRow.SalesOrderItem);
-                if (!oPending) {
-                    throw new Error("Pending row not found");
-                }
-                oPending[sSide + "Status"] = sStatus;
-                oPending[sSide + "Message"] = sMessage || "";
-            });
-            notifyChange();
+        finishRow: function (row) {
+            var key = makeKey(row.SalesOrder, row.SalesOrderItem), p = mPendingByKey[key];
+            if (!p || p.sapStatus !== "S" || p.cloudStatus !== "S") { return false; }
+            mSavedDisplay[key] = Object.assign({}, mSavedDisplay[key] || {}, p.row);
+            delete mChanges[key];
+            delete mPendingByKey[key];
+            notify();
+            return true;
         },
-
-        // 两边都成功的订单单独结束，其他失败订单继续保留
-        finishRows: function (aRows) {
-            var iCompleted = 0;
-            aRows.forEach(function (oRow) {
-                var sKey = makeKey(oRow.SalesOrder, oRow.SalesOrderItem);
-                var oPending = mPendingByKey[sKey];
-                if (!oPending || oPending.sapStatus !== "S" ||
-                    oPending.cloudStatus !== "S") {
-                    return;
-                }
-                mSavedDisplay[sKey] = Object.assign(
-                    {}, mSavedDisplay[sKey] || {}, oPending.row
-                );
-                delete mChanges[sKey];
-                delete mPendingByKey[sKey];
-                iCompleted++;
-            });
-            notifyChange();
-            return iCompleted;
+        getRowStatusText: function (order, item) {
+            hydrate(order, item);
+            var p = pending(order, item);
+            if (!p) { p = mLastStatus[makeKey(order, item)]; }
+            if (!p) { return mHydrated[makeKey(order, item)] ? "未修改" : "读取中"; }
+            return "SAP:" + p.sapStatus + " / Cloud:" + p.cloudStatus;
         },
-
-        getBatchSummary: function (aRows) {
-            var aResults = aRows.map(function (oRow) {
-                var oPending = getPending(oRow.SalesOrder, oRow.SalesOrderItem);
-                return {
-                    key: makeKey(oRow.SalesOrder, oRow.SalesOrderItem),
-                    sapStatus: oPending ? oPending.sapStatus : "S",
-                    cloudStatus: oPending ? oPending.cloudStatus : "S",
-                    sapMessage: oPending ? oPending.sapMessage : "",
-                    cloudMessage: oPending ? oPending.cloudMessage : ""
-                };
-            });
-            return aResults;
+        getRowStatusColor: function (order, item) {
+            var p = pending(order, item) || mLastStatus[makeKey(order, item)];
+            if (!p) { return "None"; }
+            if (p.sapStatus === "E") { return "Error"; }
+            if (p.cloudStatus === "E" || p.sapStatus === "U" || p.cloudStatus === "U" ||
+                p.sapStatus === "P" || p.cloudStatus === "P") { return "Warning"; }
+            if (p.sapStatus === "S" && p.cloudStatus === "S") { return "Success"; }
+            return "None";
         },
-
-        setBusy: function (bValue) {
-            bBusy = !!bValue;
-            oStateModel.setProperty("/busy", bBusy);
-            notifyChange();
+        getRowError: function (order, item) {
+            var p = pending(order, item) || mLastStatus[makeKey(order, item)];
+            return p ? [p.sapMessage, p.cloudMessage].filter(Boolean).join(" / ") : "";
         },
-
-        // 兼容旧接口，其他调用方无需立即改动
-        confirmSaved: function (aRows) {
-            aRows.forEach(function (oRow) {
-                var sKey = makeKey(oRow.SalesOrder, oRow.SalesOrderItem);
-                mSavedDisplay[sKey] = Object.assign(
-                    {}, mSavedDisplay[sKey] || {}, mChanges[sKey] || {}, oRow
-                );
-                delete mChanges[sKey];
-            });
-            notifyChange();
-        },
-
-        // 查询刷新不能丢失未完成的失败重试记录
+        setBusy: function (busy) { bBusy = !!busy; oStateModel.setProperty("/busy", bBusy); notify(); },
         clear: function () {
-            if (bBusy || Object.keys(mPendingByKey).length > 0) {
-                return false;
-            }
+            if (bBusy || Object.keys(mPendingByKey).length) { return false; }
             mChanges = Object.create(null);
             mSavedDisplay = Object.create(null);
-            notifyChange();
+            notify();
             return true;
         }
     };

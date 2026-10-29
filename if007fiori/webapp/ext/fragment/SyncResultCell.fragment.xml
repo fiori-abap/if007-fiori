@@ -1,0 +1,7 @@
+<core:FragmentDefinition xmlns:core="sap.ui.core" xmlns="sap.m">
+  <ObjectStatus
+    core:require="{handler:'zrap/if007/if007fiori/ext/fragment/SyncResultCell'}"
+    text="{parts:[{path:'SalesOrder'},{path:'SalesOrderItem'},{path:'changeState>/revision'}],formatter:'handler.text'}"
+    state="{parts:[{path:'SalesOrder'},{path:'SalesOrderItem'},{path:'changeState>/revision'}],formatter:'handler.state'}"
+    tooltip="{parts:[{path:'SalesOrder'},{path:'SalesOrderItem'},{path:'changeState>/revision'}],formatter:'handler.tooltip'}"/>
+</core:FragmentDefinition>

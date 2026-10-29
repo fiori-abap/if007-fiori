@@ -2,276 +2,229 @@ sap.ui.define([
     "sap/m/MessageToast",
     "sap/m/MessageBox",
     "sap/m/BusyDialog",
-    "zrap/if007/if007fiori/ext/util/ChangeStore"
-], function (MessageToast, MessageBox, BusyDialog, ChangeStore) {
+    "zrap/if007/if007fiori/ext/util/ChangeStore",
+    "zrap/if007/if007fiori/ext/util/SyncPersistence"
+], function (MessageToast, MessageBox, BusyDialog, ChangeStore, SyncPersistence) {
     "use strict";
 
     var bSaving = false;
-    var sActionPath =
-        "/Addon/com.sap.gateway.srvd.zui_if007_addon.v0001.saveBatch(...)";
-
-    var oBusyDialog = new BusyDialog({
-        title: "正在保存",
-        text: "正在处理 SAP 和 HANA Cloud 数据，请稍候...",
-        showCancelButton: false
+    var sActionPath = "/Addon/com.sap.gateway.srvd.zui_if007_addon.v0001.saveBatch(...)";
+    var FIELDS = ["CommentText", "FollowUpDate", "SapStatus", "CloudDeliveryDate", "ExternalStatus"];
+    var PENDING = ["PendingComment", "PendingFollowUpDate", "PendingSapStatus",
+        "PendingDeliveryDate", "PendingExternalStatus"];
+    var busy = new BusyDialog({
+        title: "正在保存", text: "逐条保存 SAP / Cloud，并回写同步状态…", showCancelButton: false
     });
 
-    function makeKey(sOrder, sItem) {
-        return JSON.stringify([sOrder, sItem]);
+    function key(order, item) {
+        return JSON.stringify([norm(order, 10), norm(item, 6)]);
     }
-
-    function normalizeSapKey(vValue, iLength) {
-        var sValue = String(
-            vValue == null ? "" : vValue
-        ).trim();
-
-        if (/^\d+$/.test(sValue) &&
-            sValue.length <= iLength) {
-            return sValue.padStart(iLength, "0");
+    function norm(value, size) {
+        var s = String(value == null ? "" : value).trim();
+        return /^\d+$/.test(s) && s.length <= size ? s.padStart(size, "0") : s;
+    }
+    function requestId() {
+        if (typeof crypto !== "undefined" && crypto.randomUUID) {
+            return crypto.randomUUID().replace(/-/g, "");
         }
-
-        return sValue;
+        return (Date.now().toString(16) + Math.random().toString(16).slice(2) +
+            Math.random().toString(16).slice(2)).padEnd(32, "0").slice(0, 32);
     }
-
-
-    function normalizeValue(vValue) {
-        return vValue == null ? "" : vValue;
+    function defaultValue(field, value) {
+        if (field === "FollowUpDate" || field === "CloudDeliveryDate") { return value || ""; }
+        return value == null ? "" : value;
     }
-
-    function collectRows(aSelectedContexts, sMode) {
-        var mChanges = Object.create(null);
-        ChangeStore.getChanges().forEach(function (oRow) {
-            mChanges[makeKey(oRow.SalesOrder, oRow.SalesOrderItem)] = oRow;
-        });
-
-        var aRows = [];
-        aSelectedContexts.forEach(function (oContext) {
-            var sOrder = oContext.getProperty("SalesOrder");
-            var sItem = oContext.getProperty("SalesOrderItem");
-            var oPendingRow = ChangeStore.getPendingRow(sOrder, sItem);
-
-            if (oPendingRow) {
-                aRows.push(oPendingRow);
+    function maskFromChanges(changes) {
+        return FIELDS.map(function (f) {
+            return Object.prototype.hasOwnProperty.call(changes, f) ? "1" : "0";
+        }).join("");
+    }
+    function collectRows(selected, mode) {
+        var byKey = Object.create(null);
+        ChangeStore.getChanges().forEach(function (row) { byKey[key(row.SalesOrder, row.SalesOrderItem)] = row; });
+        var rows = [];
+        selected.forEach(function (context) {
+            var order = context.getProperty("SalesOrder"), item = context.getProperty("SalesOrderItem");
+            var pending = ChangeStore.getPendingRow(order, item);
+            if (pending) {
+                rows.push(Object.assign({}, pending));
                 return;
             }
-
-            // 普通保存只发送已改动的订单，不重写未改动行
-            if (sMode === "A" && !mChanges[makeKey(sOrder, sItem)]) {
-                return;
-            }
-
-            aRows.push({
-                SalesOrder: sOrder,
-                SalesOrderItem: sItem,
-                FollowUpDate: normalizeValue(ChangeStore.getValue(
-                    sOrder, sItem, oContext.getProperty("FollowUpDate"), "FollowUpDate"
-                )),
-                CommentText: normalizeValue(ChangeStore.getValue(
-                    sOrder, sItem, oContext.getProperty("CommentText"), "CommentText"
-                )),
-                SapStatus: normalizeValue(ChangeStore.getValue(
-                    sOrder, sItem, oContext.getProperty("SapStatus"), "SapStatus"
-                ))
+            var changes = byKey[key(order, item)];
+            if (mode === "A" && !changes) { return; }
+            var row = {
+                SalesOrder: norm(order, 10), SalesOrderItem: norm(item, 6),
+                RequestId: requestId(), ChangeMask: maskFromChanges(changes || {})
+            };
+            FIELDS.forEach(function (field) {
+                row[field] = defaultValue(field,
+                    changes && Object.prototype.hasOwnProperty.call(changes, field)
+                        ? changes[field] : context.getProperty(field));
             });
+            rows.push(row);
         });
-        return aRows;
+        return rows;
     }
-
-    function validateRows(aRows) {
-        aRows.forEach(function (oRow) {
-            if (!oRow.SalesOrder || !oRow.SalesOrderItem) {
-                throw new Error("订单编号或明细编号为空");
+    function validateRow(row) {
+        if (!row.SalesOrder || !row.SalesOrderItem || !/^[01]{5}$/.test(row.ChangeMask)) {
+            throw new Error("受注番号 / 明細番号 / 修改标记有误");
+        }
+        if (String(row.CommentText).length > 255) { throw new Error("备注超过255字符"); }
+        for (var date of [row.FollowUpDate, row.CloudDeliveryDate]) {
+            if (date && !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+                throw new Error("日期必须是 yyyy-MM-dd");
             }
-            if (String(oRow.CommentText || "").length > 255) {
-                throw new Error(oRow.SalesOrder + "：备注不能超过255个字符");
-            }
-            if (oRow.FollowUpDate &&
-                !/^\d{4}-\d{2}-\d{2}$/.test(oRow.FollowUpDate)) {
-                throw new Error(oRow.SalesOrder + "：日期格式不正确");
-            }
-            if (oRow.SapStatus &&
-                !["OPEN", "PROC", "DONE"].includes(oRow.SapStatus)) {
-                throw new Error(oRow.SalesOrder + "：SAP状态不正确");
-            }
+        }
+        if (row.SapStatus && !["OPEN", "PROC", "DONE"].includes(row.SapStatus)) {
+            throw new Error("SAP业务状态只能是 OPEN/PROC/DONE");
+        }
+        if (String(row.ExternalStatus).length > 20) { throw new Error("外部状态超过20字符"); }
+        // Current iFlow JDBC settings cannot reliably clear an existing DATE column with empty XML.
+        if (row.ChangeMask[3] === "1" && !row.CloudDeliveryDate) {
+            throw new Error("暂不支持清空 Cloud 纳入予定日；请填写日期再保存");
+        }
+    }
+    function snapshot(row, sapState, cloudState) {
+        var result = {
+            SalesOrder: norm(row.SalesOrder, 10), SalesOrderItem: norm(row.SalesOrderItem, 6),
+            RequestId: row.RequestId, ChangeMask: row.ChangeMask,
+            SapSaveState: sapState, CloudSaveState: cloudState,
+            SapError: "", CloudError: ""
+        };
+        FIELDS.forEach(function (field, i) {
+            result[PENDING[i]] = (field === "FollowUpDate" || field === "CloudDeliveryDate")
+                ? (row[field] || null) : (row[field] || "");
         });
+        return result;
     }
-
-    function buildJson(aRows) {
-        return JSON.stringify({
-            rows: aRows.map(function (oRow) {
-                return {
-                    orderNo: normalizeSapKey(
-                        oRow.SalesOrder, 10
-                    ),
-                    itemNo: normalizeSapKey(
-                        oRow.SalesOrderItem, 6
-                    ),
-                    followUpDate: oRow.FollowUpDate,
-                    commentText: oRow.CommentText,
-                    sapStatus: oRow.SapStatus
-                };
-            })
-        });
+    function requestJson(row) {
+        return JSON.stringify({rows: [{
+            orderNo: norm(row.SalesOrder, 10),
+            itemNo: norm(row.SalesOrderItem, 6),
+            followUpDate: row.FollowUpDate || "",
+            commentText: row.CommentText || "",
+            sapStatus: row.SapStatus || "",
+            cloudDeliveryDate: row.CloudDeliveryDate || "",
+            externalStatus: row.ExternalStatus || "",
+            changeMask: row.ChangeMask
+        }]});
     }
-
-    async function callAction(sMode, aRows) {
-        var oModel = ChangeStore.getAddonModel();
-        if (!oModel) {
-            throw new Error("找不到 Addon OData Model");
-        }
-        var oAction = oModel.bindContext(sActionPath);
-        oAction.setParameter("SaveMode", sMode);
-        oAction.setParameter("RowsJson", buildJson(aRows));
-
-        // 不使用原来 SAP CRUD 的 pending batch，以独立请求确认提交结果
-        await oAction.invoke("$direct");
-
-        var oContext = oAction.getBoundContext();
-        if (!oContext) {
-            throw new Error("Action 没有返回结果");
-        }
-        var oResult = oContext.getObject();
-        if (oResult && Array.isArray(oResult.value)) {
-            oResult = oResult.value[0];
-        }
-        if (!oResult) {
-            throw new Error("Action 返回为空");
-        }
-        return oResult;
-    }
-
-    async function executeSide(sSide, aRows) {
+    async function callAction(side, row) {
+        var model = ChangeStore.getAddonModel();
+        if (!model) { throw new Error("Addon OData Model 未初始化"); }
+        var action = model.bindContext(sActionPath);
+        action.setParameter("SaveMode", side === "sap" ? "S" : "C");
+        action.setParameter("RowsJson", requestJson(row));
         try {
-            var oResult = await callAction(sSide === "sap" ? "S" : "C", aRows);
-            var sStatus = sSide === "sap" ? oResult.SapStatus : oResult.CloudStatus;
-            var sMessage = sSide === "sap" ? oResult.SapMessage : oResult.CloudMessage;
-
-            // P 只有批次统计，无法确认具体失败订单：整体按失败保留重试
-            if (sStatus !== "S") {
-                return { status: "F", message: sMessage || "本批次未全部成功" };
-            }
-            return { status: "S", message: sMessage || "保存成功" };
-        } catch (oError) {
-            return { status: "F", message: oError.message || String(oError) };
+            await action.invoke("$direct");
+            var context = action.getBoundContext();
+            var res = context && context.getObject();
+            if (res && Array.isArray(res.value)) { res = res.value[0]; }
+            if (!res) { throw new Error("saveBatch 返回空"); }
+            return res;
+        } finally {
+            if (typeof action.destroy === "function") { action.destroy(); }
         }
     }
-
-    function resultMessage(oResult, sSide) {
-        var sLabel = sSide === "sap" ? "SAP" : "Cloud";
-        var sStatus = sSide === "sap" ? oResult.sapStatus : oResult.cloudStatus;
-        var sMessage = sSide === "sap" ? oResult.sapMessage : oResult.cloudMessage;
-        return sLabel + "：" + (sStatus === "S" ? "保存成功" : "保存失败") +
-            (sStatus === "S" ? "" : "\n" + (sMessage || ""));
-    }
-
-    async function save(sMode, aSelectedContexts) {
-        if (bSaving) {
-            return;
+    async function executeSide(side, row) {
+        // No relevant field changed: mark this side as successfully skipped.
+        if (side === "sap" && ![0, 1, 2].some(function (i) { return row.ChangeMask[i] === "1"; })) {
+            return {state: "S", message: "SAP字段未变更"};
         }
-        if (!Array.isArray(aSelectedContexts) || !aSelectedContexts.length) {
-            MessageToast.show("请先勾选订单");
-            return;
-        }
-        var sSelectedMode = ChangeStore.getModeForSelection(aSelectedContexts);
-        if (sSelectedMode !== sMode) {
-            MessageBox.warning(
-                "当前所选订单的保存状态不同，请分别勾选正常订单或同一种失败订单。"
-            );
-            return;
-        }
-
-        var aRows = collectRows(aSelectedContexts, sMode);
-        if (!aRows.length) {
-            MessageToast.show("选中的订单没有修改内容");
-            return;
+        if (side === "cloud" && ![0, 3, 4].some(function (i) { return row.ChangeMask[i] === "1"; })) {
+            return {state: "S", message: "Cloud字段未变更"};
         }
         try {
-            validateRows(aRows);
-        } catch (oError) {
-            MessageBox.error(oError.message);
+            var res = await callAction(side, row);
+            var code = side === "sap" ? res.SapStatus : res.CloudStatus;
+            var message = side === "sap" ? res.SapMessage : res.CloudMessage;
+            if (code === "S") { return {state: "S", message: ""}; }
+            if (code === "F") { return {state: "E", message: message || "明确返回失败"}; }
+            // P (partial) or N cannot identify a committed per-row result.
+            return {state: "U", message: message || "结果未确认，请核对实际数据"};
+        } catch (err) {
+            return {state: "U", message: "请求异常，可能已提交：" + (err.message || err)};
+        }
+    }
+    async function prepare(row, mode) {
+        var current = await SyncPersistence.readSnapshot(row.SalesOrder, row.SalesOrderItem);
+        if ((mode === "S" || mode === "C") && !current) {
+            throw new Error("失败快照不存在，禁止在缺少原始输入时重试");
+        }
+        if ((mode === "S" || mode === "C") && current.RequestId !== row.RequestId) {
+            throw new Error("请求 ID 已改变，禁止使用旧数据重试");
+        }
+        var sapState = current && mode === "C" ? current.SapSaveState : "P";
+        var cloudState = current && mode === "S" ? current.CloudSaveState : "P";
+        var data = snapshot(row, sapState, cloudState);
+        if (mode === "S" && current) { data.CloudError = current.CloudError || ""; }
+        if (mode === "C" && current) { data.SapError = current.SapError || ""; }
+        await SyncPersistence.saveSnapshot(data, current && current.RequestId);
+        ChangeStore.beginRow(Object.assign({}, row, data));
+    }
+    async function save(mode, selected) {
+        if (bSaving) { return; }
+        if (!Array.isArray(selected) || !selected.length) { MessageToast.show("请先勾选订单"); return; }
+        if (ChangeStore.getModeForSelection(selected) !== mode) {
+            MessageBox.warning("所选订单状态不同，或仍在读取/核对，请分别处理");
             return;
         }
+        var rows = collectRows(selected, mode);
+        if (!rows.length) { MessageToast.show("所选订单没有修改"); return; }
+        try { rows.forEach(validateRow); }
+        catch (error) { MessageBox.error(error.message); return; }
 
-        ChangeStore.beginRows(aRows);
         bSaving = true;
         ChangeStore.setBusy(true);
-        oBusyDialog.open();
-
+        busy.open();
+        var messages = [], done = 0, errors = 0;
         try {
-            var aSides = sMode === "A" ? ["sap", "cloud"] :
-                [sMode === "S" ? "sap" : "cloud"];
-
-            var aSideResults = await Promise.all(aSides.map(function (sSide) {
-                return executeSide(sSide, aRows);
-            }));
-
-            aSides.forEach(function (sSide, i) {
-                var oSideResult = aSideResults[i];
-                ChangeStore.setSideResults(
-                    aRows, sSide, oSideResult.status, oSideResult.message
-                );
-            });
-
-            var aSummaries = ChangeStore.getBatchSummary(aRows);
-            var iCompleted = ChangeStore.finishRows(aRows);
-
-            if (iCompleted === aRows.length) {
-                MessageToast.show("SAP 和 Cloud 保存成功：" + iCompleted + " 条");
-                return;
-            }
-
-            var oFirst = aSummaries[0];
-            var bUniform = aSummaries.every(function (oRow) {
-                return oRow.sapStatus === oFirst.sapStatus &&
-                    oRow.cloudStatus === oFirst.cloudStatus;
-            });
-
-            var sMessage = bUniform
-                ? resultMessage(oFirst, "sap") + "\n\n" + resultMessage(oFirst, "cloud")
-                : "本次含不同保存结果，请分别选中相关订单处理。";
-
-            if (bUniform) {
-                if (oFirst.sapStatus === "S" && oFirst.cloudStatus === "F") {
-                    sMessage += "\n\n请勾选失败订单，点击【仅保存 Cloud】重试。";
-                } else if (oFirst.sapStatus === "F" && oFirst.cloudStatus === "S") {
-                    sMessage += "\n\n请勾选失败订单，点击【仅保存 SAP】重试。";
-                } else {
-                    sMessage += "\n\n两边都失败，可勾选原订单再次点击【保存】。";
+            // One order per SAP/Cloud call: the current JDBC response has no trustworthy per-order details.
+            for (var row of rows) {
+                var title = row.SalesOrder + "/" + row.SalesOrderItem;
+                try {
+                    await prepare(row, mode); // MUST commit snapshot before sending either side
+                    var sides = mode === "A" ? ["sap", "cloud"] : [mode === "S" ? "sap" : "cloud"];
+                    for (var side of sides) {
+                        var outcome = await executeSide(side, row);
+                        // Persist result BEFORE running the next side.
+                        await SyncPersistence.updateSideResult(row, side, outcome.state,
+                            outcome.message.slice(0, 255));
+                        ChangeStore.setSideResult(row, side, outcome.state, outcome.message);
+                    }
+                    if (ChangeStore.finishRow(row)) { done++; }
+                    else {
+                        errors++;
+                        messages.push(title + "：SAP/Cloud 保存结果未全部成功（可按对应失败侧重试）");
+                    }
+                } catch (error) {
+                    errors++;
+                    messages.push(title + "：" + (error.message || error) +
+                        "。可能已写入一侧，请先核对同步记录，勿盲目重试。");
+                    console.error("[IF007] Save row error", row, error);
                 }
             }
-            MessageBox.warning(sMessage, { title: "IF007 保存结果" });
-        } catch (oError) {
-            MessageBox.error("保存过程发生错误：" + (oError.message || String(oError)));
-            console.error("[IF007] Save error", oError);
+            if (!errors) { MessageToast.show("SAP 和 Cloud 保存成功：" + done + " 条"); }
+            else { MessageBox.warning("成功 " + done + " 条，待处理 " + errors + " 条。\n\n" +
+                messages.join("\n"), {title: "IF007 保存结果"}); }
         } finally {
-            oBusyDialog.close();
+            busy.close();
             ChangeStore.setBusy(false);
             bSaving = false;
         }
     }
-
     return {
-        // SAP FE 自动把当前勾选的 aSelectedContexts 传入 enablement 回调
-        isEnabled: function (oContext, aSelectedContexts) {
-            return !bSaving &&
-                ChangeStore.getModeForSelection(aSelectedContexts) === "A";
+        isEnabled: function (_context, selected) {
+            return !bSaving && ChangeStore.getModeForSelection(selected) === "A";
         },
-        isSapRetryEnabled: function (oContext, aSelectedContexts) {
-            return !bSaving &&
-                ChangeStore.getModeForSelection(aSelectedContexts) === "S";
+        isSapRetryEnabled: function (_context, selected) {
+            return !bSaving && ChangeStore.getModeForSelection(selected) === "S";
         },
-        isCloudRetryEnabled: function (oContext, aSelectedContexts) {
-            return !bSaving &&
-                ChangeStore.getModeForSelection(aSelectedContexts) === "C";
+        isCloudRetryEnabled: function (_context, selected) {
+            return !bSaving && ChangeStore.getModeForSelection(selected) === "C";
         },
-        onSaveChanges: function (oContext, aSelectedContexts) {
-            return save("A", aSelectedContexts);
-        },
-        onSaveSap: function (oContext, aSelectedContexts) {
-            return save("S", aSelectedContexts);
-        },
-        onSaveCloud: function (oContext, aSelectedContexts) {
-            return save("C", aSelectedContexts);
-        }
+        onSaveChanges: function (_context, selected) { return save("A", selected); },
+        onSaveSap: function (_context, selected) { return save("S", selected); },
+        onSaveCloud: function (_context, selected) { return save("C", selected); }
     };
 });

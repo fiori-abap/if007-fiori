@@ -1,0 +1,7 @@
+<core:FragmentDefinition xmlns:core="sap.ui.core" xmlns="sap.m">
+  <Input
+    core:require="{handler:'zrap/if007/if007fiori/ext/fragment/ExternalStatusCell'}"
+    value="{parts:[{path:'SalesOrder'},{path:'SalesOrderItem'},{path:'ExternalStatus'},{path:'changeState>/revision'}],formatter:'handler.formatValue'}"
+    editable="{parts:[{path:'SalesOrder'},{path:'SalesOrderItem'},{path:'changeState>/revision'}],formatter:'handler.isEditable'}"
+    liveChange="handler.onLiveChange" maxLength="20" width="100%" placeholder="外部状态"/>
+</core:FragmentDefinition>
