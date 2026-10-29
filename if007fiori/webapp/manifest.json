@@ -182,6 +182,33 @@
                         "placement": "After"
                       },
                       "template": "zrap.if007.if007fiori.ext.fragment.SapStatusCell"
+                    },
+                    "CloudDeliveryDateEditCell": {
+                      "header": "Cloud納入予定日（編集）",
+                      "width": "13rem",
+                      "position": {
+                        "anchor": "DataField::CloudDeliveryDate",
+                        "placement": "After"
+                      },
+                      "template": "zrap.if007.if007fiori.ext.fragment.CloudDeliveryDateCell"
+                    },
+                    "ExternalStatusEditCell": {
+                      "header": "外部ステータス（編集）",
+                      "width": "13rem",
+                      "position": {
+                        "anchor": "DataField::ExternalStatus",
+                        "placement": "After"
+                      },
+                      "template": "zrap.if007.if007fiori.ext.fragment.ExternalStatusCell"
+                    },
+                    "SyncResultCell": {
+                      "header": "同期保存結果",
+                      "width": "15rem",
+                      "position": {
+                        "anchor": "DataField::SyncStatus",
+                        "placement": "After"
+                      },
+                      "template": "zrap.if007.if007fiori.ext.fragment.SyncResultCell"
                     }
                   },
                   "actions": {
